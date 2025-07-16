@@ -2,51 +2,58 @@
 
 A Flask-based web application that displays **real-time EC2 instance metrics** — CPU, Memory, and Disk utilization — in the form of **interactive gauge charts** using Plotly. The dashboard also shows the instance's **private IP address**.
 
+---
+
 ## 🧩 Features
 
 - 📊 **Live Dashboard**: Visualizes resource usage via speedometer-style Plotly gauges.
 - 🛰️ **Private IP Display**: Shows the current EC2 instance's private IPv4 address.
 - ⚙️ **Lightweight & Portable**: Simple setup; deployable on any Ubuntu-based EC2 instance.
 
+---
+
 ## 📁 Project Structure
 
-.
-├── app.py # Flask app logic
-├── test_app.py # Unit tests for the Flask app
-├── templates/
-│ └── dashboard.html # HTML template for the dashboard
-└── static/
-└── style.css # Custom CSS styling
+. ├── app.py # Flask app logic
+  ├── test_app.py # Unit tests for the Flask app 
+  ├── templates/ 
+        └── dashboard.html # HTML template for the dashboard 
+  └── static/ 
+        └── style.css # Custom CSS styling
 
+
+
+---
 
 ## 🔁 CI/CD Pipeline Overview (via Jenkins)
 
-The project includes a fully automated **CI/CD pipeline** built with Jenkins:
+The project includes a fully automated **CI/CD pipeline** built with Jenkins.
 
 ### 🧪 Pipeline Stages
 
-1. **Checkout SCM** – Pulls latest code from GitHub repository
-2. **Install Dependencies** – Sets up Python virtual environment and installs packages
-3. **Unit Test** – Runs Python test cases
-4. **Linting** – Checks code quality with flake8/pylint
-5. **Build** – Builds Docker image
-6. **Security Scan** – Scans Docker image using Trivy
-7. **Push** – Pushes Docker image to Amazon ECR
-8. **Create EKS Cluster** *(optional)* – Conditionally creates EKS cluster using `eksctl`
-9. **Deploy on Kubernetes** – Deploys app on EKS using `kubectl`
+1. **Checkout SCM** – Pulls latest code from GitHub repository  
+2. **Install Dependencies** – Sets up Python virtual environment and installs packages  
+3. **Unit Test** – Runs Python test cases  
+4. **Linting** – Checks code quality with flake8/pylint  
+5. **Build** – Builds Docker image  
+6. **Security Scan** – Scans Docker image using Trivy  
+7. **Push** – Pushes Docker image to Amazon ECR  
+8. **Create EKS Cluster** *(optional)* – Conditionally creates EKS cluster using `eksctl`  
+9. **Deploy on Kubernetes** – Deploys app on EKS using `kubectl`  
+
+---
 
 ## ⚙️ EC2 Instance Setup (t2.medium)
 
 This project was bootstrapped on a **t2.medium Ubuntu EC2 instance**, with the following tools manually installed:
 
-- ✅ Java & Jenkins (for CI/CD orchestration)
-- ✅ Python tools:
-  ```bash
-  sudo apt install python3-venv
-  python3 -m venv $VENV
-  . $VENV/bin/activate
-  pip install --upgrade pip
-  pip install -r requirements.txt
+```bash
+# Python Tools
+sudo apt install python3-venv
+python3 -m venv $VENV
+. $VENV/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
 
 
 ✅ Docker (for containerizing the app)
@@ -74,40 +81,30 @@ Jenkins Plugins Used (For CI/CD to AWS EKS)
 
 
 
-
-CI/CD Pipeline Breakdown (Jenkins)
-
-The project uses a Jenkins-based CI/CD pipeline with the following stages:
+CI/CD Pipeline Breakdown
 🔍 1. Checkout SCM
+Clones the latest source code from GitHub using stored credentials.
 
-Clones the latest source code from the GitHub repository using stored credentials.
 📦 2. Install Dependencies
+Sets up Python virtual environment, upgrades pip, and installs packages from requirements.txt.
 
-Sets up a Python virtual environment, upgrades pip, and installs all required dependencies from requirements.txt.
 ✅ 3. Unit Test
+Runs automated tests using pytest to validate functionality.
 
-Executes automated unit tests using pytest to ensure the core functionality works as expected.
 🧹 4. Linting
+Performs static code analysis using flake8. Linting issues are logged but don’t fail the build.
 
-Runs static code analysis using flake8 to maintain code quality and detect style violations. Linting issues are logged but do not fail the pipeline.
 🛠️ 5. Build
+Creates Docker image using your Dockerfile and tags it with the Jenkins build number.
 
-Builds a Docker image using the Dockerfile, tagging it with the Jenkins build number for version control.
 🔐 6. Security Scan
+Scans the image for vulnerabilities via Trivy to ensure DevSecOps compliance.
 
-Scans the Docker image for known vulnerabilities using Trivy, aligning with DevSecOps best practices.
 🚀 7. Push
+Authenticates with ECR and pushes the Docker image. Credentials are securely injected via Jenkins.
 
-Authenticates securely with Docker Hub and pushes the Docker image. Credentials are injected securely using Jenkins' withCredentials.
-☁️ 8. Create EKS Cluster (Conditional)
+☁️ 8. Create EKS Cluster (Optional)
+Creates a new EKS cluster using eksctl if the RECREATE_CLUSTER flag is set to true.
 
-If the RECREATE_CLUSTER parameter is set to true, a new EKS cluster is provisioned using eksctl. This stage runs only when needed.
-📦 9. Deploy on Kubernetes (EKS)
-
-    Connects to the EKS cluster using kubectl
-
-    Applies Kubernetes manifests (namespace.yml, deployment.yml, and service.yml)
-
-    Dynamically replaces the image tag in the deployment file
-
-    Verifies the service deployment
+📦 9. Deploy on Kubernetes
+Connects to the EKS cluster via kubectl, applies Kubernetes manifests (namespace.yml, deployment.yml, service.yml), dynamically updates the image tag, and verifies the deployment.
