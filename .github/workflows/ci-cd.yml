@@ -2,94 +2,128 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
-      RECREATE_CLUSTER:
+      recreate_cluster:
         description: 'Recreate EKS cluster on each run'
         required: false
-        default: 'false'
+        default: false
+        type: boolean
 
 env:
-  VENV: myenv
-  USER_NAME: rakshitsen
-  IMAGE_NAME: Github-Better-Image
-  AWS_REGION: ap-south-1
-  CLUSTER_NAME: demo-cluster
+  VENV: "myenv"
+  USER_NAME: "rakshitsen"
+  IMAGE_NAME: "better-assess-image"
+  AWS_REGION: "ap-south-1"
+  CLUSTER_NAME: "demo-cluster"
 
 jobs:
-  build:
+  ci-cd:
     runs-on: ubuntu-latest
-    environment: production
-
+    
     steps:
-      - name: Checkout SCM
-        uses: actions/checkout@v4
+    - name: Checkout SCM
+      uses: actions/checkout@v4
+      with:
+        ref: main
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.11
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
 
-      - name: Install dependencies
-        run: |
-          python3 -m venv $VENV
-          source $VENV/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
+    - name: Install dependencies
+      run: |
+        set -e
+        python3 -m venv $VENV
+        . $VENV/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Unit test
-        run: |
-          source $VENV/bin/activate
-          pytest
+    - name: Unit test
+      run: |
+        set -e
+        . $VENV/bin/activate
+        pytest
 
-      - name: Linting
-        run: |
-          source $VENV/bin/activate
-          flake8 .
-        continue-on-error: true
+    - name: Linting
+      run: |
+        set -e
+        . $VENV/bin/activate
+        flake8 . || echo "Linting issues found but continuing..."
 
-      - name: Build Docker image
-        run: |
-          docker build -t ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }} .
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-      - name: Security Scan with Trivy
-        uses: aquasecurity/trivy-action@v0.14.0
-        with:
-          image-ref: ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+    - name: Build Docker image
+      run: |
+        docker build -t $USER_NAME/$IMAGE_NAME:${{ github.run_number }} .
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+    - name: Security Scan with Trivy
+      run: |
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+        aquasec/trivy image $USER_NAME/$IMAGE_NAME:${{ github.run_number }}
 
-      - name: Push Docker image
-        run: |
-          docker push ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+    - name: Push Docker image
+      run: |
+        docker push $USER_NAME/$IMAGE_NAME:${{ github.run_number }}
 
-      - name: Conditionally Create EKS Cluster
-        if: ${{ github.event.inputs.RECREATE_CLUSTER == 'true' }}
-        run: |
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Install eksctl
+      run: |
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+
+    - name: Create EKS Cluster (Conditioned)
+      if: ${{ inputs.recreate_cluster == true }}
+      run: |
+        eksctl create cluster \
+          --name $CLUSTER_NAME \
+          --region $AWS_REGION \
+          --nodegroup-name ng1 \
+          --node-type t3.medium \
+          --nodes 2
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Check and Create EKS Cluster if needed
+      run: |
+        # Check if cluster exists
+        if ! aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION >/dev/null 2>&1; then
+          echo "Cluster $CLUSTER_NAME does not exist. Creating..."
           eksctl create cluster \
             --name $CLUSTER_NAME \
             --region $AWS_REGION \
             --nodegroup-name ng1 \
             --node-type t3.medium \
             --nodes 2
+        else
+          echo "Cluster $CLUSTER_NAME already exists."
+        fi
 
-      - name: Deploy to EKS
-        run: |
-          aws eks --region $AWS_REGION update-kubeconfig --name $CLUSTER_NAME
-          kubectl apply -f namespace.yml
-          sed -i "s|image:latest|${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}|g" deployment.yml
-          kubectl apply -f deployment.yml
-          kubectl apply -f service.yml
-          kubectl get service -n project
+    - name: Deploy on K8S using EKS
+      run: |
+        aws eks --region $AWS_REGION update-kubeconfig --name $CLUSTER_NAME
+        kubectl apply -f namespace.yml
+        sed -i "s|image:latest|$USER_NAME/$IMAGE_NAME:${{ github.run_number }}|g" deployment.yml
+        kubectl apply -f deployment.yml
+        kubectl apply -f service.yml
+        kubectl get service -n project
