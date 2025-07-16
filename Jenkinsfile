@@ -8,7 +8,7 @@ pipeline {
     environment {
         VENV = "myenv"
         USER_NAME = "rakshitsen"
-        IMAGE_NAME = "Better-assess-image"
+        IMAGE_NAME = "better-assess-image"
         AWS_REGION = "ap-south-1"
         CLUSTER_NAME = "demo-cluster"
     }
