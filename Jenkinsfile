@@ -111,7 +111,7 @@ pipeline {
             }
         }
 
-        stage('Check Cluster Nodes') {
+        stage('Deploy on K8S using EKS') {
             steps {
                 withAWS(credentials: 'AWS_CRED', region: "${AWS_REGION}") {
                     sh '''
