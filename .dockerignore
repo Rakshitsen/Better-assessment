@@ -1,3 +1,9 @@
 .pytest_cache/
 myenv/
 __pycache__/
+scripts/
+.github/
+deployment.yml
+namespace.yml
+service.yml
+Jenkinsfile
