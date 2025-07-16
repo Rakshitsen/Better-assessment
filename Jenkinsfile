@@ -18,7 +18,7 @@ pipeline {
         stage('Checkout SCM') {
             steps {
                 git(
-                    branch: 'develop',
+                    branch: 'main',
                     credentialsId: 'Git_cred',
                     url: 'https://github.com/Rakshitsen/demo-test-repo-flask.git'
                 )
