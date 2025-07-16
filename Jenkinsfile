@@ -8,8 +8,8 @@ pipeline {
     environment {
         VENV = "myenv"
         USER_NAME = "rakshitsen"
-        IMAGE_NAME = "flask-july"
-        AWS_REGION = "us-east-1"
+        IMAGE_NAME = "Better-assess-image"
+        AWS_REGION = "ap-south-1"
         CLUSTER_NAME = "demo-cluster"
     }
 
