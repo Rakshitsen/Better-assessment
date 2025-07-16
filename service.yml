@@ -1,0 +1,15 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: flask-srv
+  namespace: project
+spec:
+  type: NodePort
+  selector:
+    app: flask
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+      nodePort: 31245 
+

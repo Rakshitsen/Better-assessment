@@ -1,0 +1,89 @@
+name: CI/CD for Flask App
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE_NAME: flask-july
+  USER_NAME: rakshitsen
+  AWS_REGION: us-east-1
+  CLUSTER_NAME: demo-cluster
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv myenv
+          source myenv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Unit Tests
+        run: |
+          source myenv/bin/activate
+          pytest
+
+      - name: Run Linting
+        continue-on-error: true
+        run: |
+          source myenv/bin/activate
+          flake8 .
+
+      - name: Docker Build
+        run: |
+          docker build -t ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }} .
+
+      - name: Security Scan with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+
+      - name: Docker Login & Push
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker push ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+          docker logout
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create EKS Cluster (Conditional)
+        if: ${{ github.event.inputs.RECREATE_CLUSTER == 'true' }}
+        run: |
+          eksctl create cluster \
+            --name ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --nodegroup-name ng1 \
+            --node-type t3.medium \
+            --nodes 2
+
+      - name: Update and Deploy to EKS
+        run: |
+          kubectl apply -f namespace.yml
+          sed -i "s|image:latest|${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}|g" deployment.yml
+          kubectl apply -f deployment.yml
+          kubectl apply -f service.yml

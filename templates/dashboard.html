@@ -1,0 +1,41 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EC2 Instance Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <h2>EC2 Instance Metrics</h2>
+    <div class="private-ip"><b>Private IP:</b> {{ private_ip }}</div>
+
+    <div class="metrics-container">
+        <div class="gauge-box" id="cpu_gauge"></div>
+        <div class="gauge-box" id="memory_gauge"></div>
+        <div class="gauge-box" id="disk_gauge"></div>
+    </div>
+
+    <script>
+        function makeGauge(id, value, title) {
+            var data = [
+                {
+                    type: "indicator",
+                    mode: "gauge+number",
+                    value: value,
+                    title: { text: title },
+                    gauge: {
+                        axis: { range: [0, 100] },
+                        bar: { color: "#1f77b4" }
+                    }
+                }
+            ];
+            Plotly.newPlot(id, data, {margin: {t: 0, b: 0}});
+        }
+
+        makeGauge('cpu_gauge', {{ cpu }}, "CPU Utilization (%)");
+        makeGauge('memory_gauge', {{ memory }}, "Memory Utilization (%)");
+        makeGauge('disk_gauge', {{ disk }}, "Disk Utilization (%)");
+    </script>
+</body>
+</html>
