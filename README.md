@@ -1,4 +1,4 @@
-# Real-Time EC2 Metrics Dashboard with CI/CD to EKS 🚀
+# Real-Time EC2 Metrics Dashboard with CI/CD to EKS🚀
 
 A Flask-based web application that displays **real-time EC2 instance metrics** — CPU, Memory, and Disk utilization — in the form of **interactive gauge charts** using Plotly. The dashboard also shows the instance's **private IP address**.
 
