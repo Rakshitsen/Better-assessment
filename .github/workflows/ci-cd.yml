@@ -177,6 +177,9 @@ jobs:
           --set region=$AWS_REGION \
           --set vpcId=$VPC_ID
 
+          # Apply Ingress manifest file
+          kubectl apply -f ingress.yml
+
     - name: Verify Deployment
       run: |
         kubectl get service -n project
