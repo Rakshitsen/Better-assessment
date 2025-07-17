@@ -142,9 +142,18 @@ pipeline {
             }
         }
 
-        stage('Ingress and Ingress Controller') {
-            steps {
-                withAWS(credentials: 'AWS_CRED', region: "${AWS_REGION}") {
+       stage('Ingress and Ingress Controller') {
+    steps {
+        withAWS(credentials: 'AWS_CRED', region: "${AWS_REGION}") {
+            script {
+                def controllerExists = sh(
+                    script: "kubectl get deployment -n kube-system aws-load-balancer-controller --ignore-not-found",
+                    returnStatus: true
+                ) == 0
+
+                if (!controllerExists) {
+                    echo "AWS Load Balancer Controller not found, installing..."
+
                     sh '''
                         VPC_ID=$(aws eks describe-cluster \
                             --name $CLUSTER_NAME \
@@ -161,10 +170,19 @@ pipeline {
                             --set region=$AWS_REGION \
                             --set vpcId=$VPC_ID
                     '''
+
+                    sh 'echo "Sleeping for 90 seconds to allow webhook to become ready..."'
                     sh 'sleep 90'
-                    sh 'kubectl apply -f ingress.yml'
+                } else {
+                    echo "AWS Load Balancer Controller already installed. Skipping install step."
                 }
+
+                sh 'kubectl apply -f ingress.yml'
             }
+        }
+    }
+}
+
         }
     }
     
