@@ -142,50 +142,48 @@ pipeline {
             }
         }
 
-       stage('Ingress and Ingress Controller') {
-    steps {
-        withAWS(credentials: 'AWS_CRED', region: "${AWS_REGION}") {
-            script {
-                def controllerExists = sh(
-                    script: "kubectl get deployment -n kube-system aws-load-balancer-controller --ignore-not-found",
-                    returnStatus: true
-                ) == 0
+        stage('Ingress and Ingress Controller') {
+            steps {
+                withAWS(credentials: 'AWS_CRED', region: "${AWS_REGION}") {
+                    script {
+                        def controllerExists = sh(
+                            script: "kubectl get deployment -n kube-system aws-load-balancer-controller --ignore-not-found",
+                            returnStatus: true
+                        ) == 0
 
-                if (!controllerExists) {
-                    echo "AWS Load Balancer Controller not found, installing..."
+                        if (!controllerExists) {
+                            echo "AWS Load Balancer Controller not found, installing..."
 
-                    sh '''
-                        VPC_ID=$(aws eks describe-cluster \
-                            --name $CLUSTER_NAME \
-                            --region $AWS_REGION \
-                            --query "cluster.resourcesVpcConfig.vpcId" \
-                            --output text)
+                            sh '''
+                                VPC_ID=$(aws eks describe-cluster \
+                                    --name $CLUSTER_NAME \
+                                    --region $AWS_REGION \
+                                    --query "cluster.resourcesVpcConfig.vpcId" \
+                                    --output text)
 
-                        helm repo add eks https://aws.github.io/eks-charts
-                        helm repo update
-                        helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system \
-                            --set clusterName=$CLUSTER_NAME \
-                            --set serviceAccount.create=false \
-                            --set serviceAccount.name=aws-load-balancer-controller \
-                            --set region=$AWS_REGION \
-                            --set vpcId=$VPC_ID
-                    '''
+                                helm repo add eks https://aws.github.io/eks-charts
+                                helm repo update
+                                helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system \
+                                    --set clusterName=$CLUSTER_NAME \
+                                    --set serviceAccount.create=false \
+                                    --set serviceAccount.name=aws-load-balancer-controller \
+                                    --set region=$AWS_REGION \
+                                    --set vpcId=$VPC_ID
+                            '''
 
-                    sh 'echo "Sleeping for 90 seconds to allow webhook to become ready..."'
-                    sh 'sleep 90'
-                } else {
-                    echo "AWS Load Balancer Controller already installed. Skipping install step."
+                            sh 'echo "Sleeping for 90 seconds to allow webhook to become ready..."'
+                            sh 'sleep 90'
+                        } else {
+                            echo "AWS Load Balancer Controller already installed. Skipping install step."
+                        }
+
+                        sh 'kubectl apply -f ingress.yml'
+                    }
                 }
-
-                sh 'kubectl apply -f ingress.yml'
             }
         }
     }
-}
 
-        }
-    }
-    
     post {
         always {
             cleanWs()
