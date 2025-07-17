@@ -161,6 +161,7 @@ pipeline {
                             --set region=$AWS_REGION \
                             --set vpcId=$VPC_ID
                     '''
+                    sh 'sleep 90'
                     sh 'kubectl apply -f ingress.yml'
                 }
             }
