@@ -89,6 +89,16 @@ jobs:
         curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
         sudo mv /tmp/eksctl /usr/local/bin
 
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Install Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: 'latest'
+
     - name: Create EKS Cluster (Conditioned)
       if: ${{ inputs.recreate_cluster == true }}
       run: |
@@ -99,12 +109,8 @@ jobs:
           --node-type t3.medium \
           --nodes 2
 
-    - name: Install kubectl
-      uses: azure/setup-kubectl@v3
-      with:
-        version: 'latest'
-
     - name: Check and Create EKS Cluster if needed
+      if: ${{ inputs.recreate_cluster != true }}
       run: |
         # Check if cluster exists
         if ! aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION >/dev/null 2>&1; then
@@ -119,6 +125,29 @@ jobs:
           echo "Cluster $CLUSTER_NAME already exists."
         fi
 
+    - name: Setup OIDC Provider and Load Balancer Controller
+      run: |
+        # Associate OIDC provider
+        eksctl utils associate-iam-oidc-provider --cluster $CLUSTER_NAME --approve --region $AWS_REGION
+        
+        # Download and create IAM policy for Load Balancer Controller
+        curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.11.0/docs/install/iam_policy.json
+        
+        # Create IAM policy (ignore error if already exists)
+        aws iam create-policy \
+          --policy-name AWSLoadBalancerControllerIAMPolicy \
+          --policy-document file://iam_policy.json || echo "Policy already exists"
+        
+        # Create IAM service account
+        eksctl create iamserviceaccount \
+          --cluster $CLUSTER_NAME \
+          --namespace kube-system \
+          --name aws-load-balancer-controller \
+          --role-name AmazonEKSLoadBalancerControllerRole \
+          --attach-policy-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:policy/AWSLoadBalancerControllerIAMPolicy \
+          --approve \
+          --region $AWS_REGION
+
     - name: Deploy on K8S using EKS
       run: |
         aws eks --region $AWS_REGION update-kubeconfig --name $CLUSTER_NAME
@@ -126,4 +155,30 @@ jobs:
         sed -i "s|image:latest|$USER_NAME/$IMAGE_NAME:${{ github.run_number }}|g" deployment.yml
         kubectl apply -f deployment.yml
         kubectl apply -f service.yml
+
+    - name: Install AWS Load Balancer Controller
+      run: |
+        # Get VPC ID
+        VPC_ID=$(aws eks describe-cluster \
+          --name $CLUSTER_NAME \
+          --region $AWS_REGION \
+          --query "cluster.resourcesVpcConfig.vpcId" \
+          --output text)
+        
+        # Add EKS Helm repository
+        helm repo add eks https://aws.github.io/eks-charts
+        helm repo update
+        
+        # Install AWS Load Balancer Controller
+        helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system \
+          --set clusterName=$CLUSTER_NAME \
+          --set serviceAccount.create=false \
+          --set serviceAccount.name=aws-load-balancer-controller \
+          --set region=$AWS_REGION \
+          --set vpcId=$VPC_ID
+
+    - name: Verify Deployment
+      run: |
         kubectl get service -n project
+        kubectl get pods -n project
+        kubectl get ingress -n project || echo "No ingress found"
