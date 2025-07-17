@@ -20,7 +20,7 @@ pipeline {
                 git(
                     branch: 'test',
                     credentialsId: 'Git_cred',
-                    url: 'https://github.com/Rakshitsen/demo-test-repo-flask.git'
+                    url: 'https://github.com/Rakshitsen/Better-assessment.git'
                 )
             }
         }
