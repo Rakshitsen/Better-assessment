@@ -2,12 +2,11 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - test
   workflow_dispatch:
     inputs:
-      recreate_cluster:
+      RECREATE_CLUSTER:
         description: 'Recreate EKS cluster on each run'
         required: false
         default: false
@@ -21,167 +20,124 @@ env:
   CLUSTER_NAME: "demo-cluster"
 
 jobs:
-  ci-cd:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    
+    permissions:
+      id-token: write # Required for OIDC authentication with AWS
+      contents: read # Required to checkout code
+
     steps:
-    - name: Checkout SCM
-      uses: actions/checkout@v4
-      with:
-        ref: main
+      - name: Checkout SCM
+        uses: actions/checkout@v4
+        with:
+          repository: 'Rakshitsen/Better-assessment.git'
+          ref: 'test'
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: Install dependencies
-      run: |
-        set -e
-        python3 -m venv $VENV
-        . $VENV/bin/activate
-        pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python3 -m venv ${{ env.VENV }}
+          . ${{ env.VENV }}/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Unit test
-      run: |
-        set -e
-        . $VENV/bin/activate
-        pytest
+      - name: Unit test
+        run: |
+          . ${{ env.VENV }}/bin/activate
+          pytest
 
-    - name: Linting
-      run: |
-        set -e
-        . $VENV/bin/activate
-        flake8 . || echo "Linting issues found but continuing..."
+      - name: Linting
+        run: |
+          . ${{ env.VENV }}/bin/activate
+          flake8 .
+        continue-on-error: true # Allow pipeline to continue even if linting issues are found
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }} .
 
-    - name: Build Docker image
-      run: |
-        docker build -t $USER_NAME/$IMAGE_NAME:${{ github.run_number }} .
+      - name: Security Scan (Trivy)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy image ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
 
-    - name: Security Scan with Trivy
-      run: |
-        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-        aquasec/trivy image $USER_NAME/$IMAGE_NAME:${{ github.run_number }}
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
 
-    - name: Push Docker image
-      run: |
-        docker push $USER_NAME/$IMAGE_NAME:${{ github.run_number }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole # Replace with your IAM role ARN
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Install eksctl
-      run: |
-        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-        sudo mv /tmp/eksctl /usr/local/bin
-
-    - name: Install kubectl
-      uses: azure/setup-kubectl@v3
-      with:
-        version: 'latest'
-
-    - name: Install Helm
-      uses: azure/setup-helm@v3
-      with:
-        version: 'latest'
-
-    - name: Create EKS Cluster (Conditioned)
-      if: ${{ inputs.recreate_cluster == true }}
-      run: |
-        eksctl create cluster \
-          --name $CLUSTER_NAME \
-          --region $AWS_REGION \
-          --nodegroup-name ng1 \
-          --node-type t3.medium \
-          --nodes 2
-
-    - name: Check and Create EKS Cluster if needed
-      if: ${{ inputs.recreate_cluster != true }}
-      run: |
-        # Check if cluster exists
-        if ! aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION >/dev/null 2>&1; then
-          echo "Cluster $CLUSTER_NAME does not exist. Creating..."
+      - name: Create EKS Cluster (Conditioned)
+        if: github.event.inputs.RECREATE_CLUSTER == 'true'
+        run: |
           eksctl create cluster \
-            --name $CLUSTER_NAME \
-            --region $AWS_REGION \
+            --name ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }} \
             --nodegroup-name ng1 \
             --node-type t3.medium \
             --nodes 2
-        else
-          echo "Cluster $CLUSTER_NAME already exists."
-        fi
+          eksctl utils associate-iam-oidc-provider --cluster ${{ env.CLUSTER_NAME }} --approve --region ${{ env.AWS_REGION }}
 
-    - name: Setup OIDC Provider and Load Balancer Controller
-      run: |
-        # Associate OIDC provider
-        eksctl utils associate-iam-oidc-provider --cluster $CLUSTER_NAME --approve --region $AWS_REGION
-        
-        # Download and create IAM policy for Load Balancer Controller
-        curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.11.0/docs/install/iam_policy.json
-        
-        # Create IAM policy (ignore error if already exists)
-        aws iam create-policy \
+          curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.11.0/docs/install/iam_policy.json
+          aws iam create-policy \
           --policy-name AWSLoadBalancerControllerIAMPolicy \
-          --policy-document file://iam_policy.json || echo "Policy already exists"
-        
-        # Create IAM service account
-        eksctl create iamserviceaccount \
-          --cluster $CLUSTER_NAME \
+          --policy-document file://iam_policy.json
+
+          eksctl create iamserviceaccount \
+          --cluster ${{ env.CLUSTER_NAME }} \
           --namespace kube-system \
           --name aws-load-balancer-controller \
           --role-name AmazonEKSLoadBalancerControllerRole \
           --attach-policy-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:policy/AWSLoadBalancerControllerIAMPolicy \
           --approve \
-          --region $AWS_REGION
+          --region ${{ env.AWS_REGION }}
 
-    - name: Deploy on K8S using EKS
-      run: |
-        aws eks --region $AWS_REGION update-kubeconfig --name $CLUSTER_NAME
-        kubectl apply -f namespace.yml
-        sed -i "s|image:latest|$USER_NAME/$IMAGE_NAME:${{ github.run_number }}|g" deployment.yml
-        kubectl apply -f deployment.yml
-        kubectl apply -f service.yml
+      - name: Deploy on K8S using EKS
+        run: |
+          aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.CLUSTER_NAME }}
+          kubectl apply -f namespace.yml
+          sed -i "s|image:latest|${{ env.USER_NAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}|g" deployment.yml
+          kubectl apply -f deployment.yml
+          kubectl apply -f service.yml
 
-    - name: Install AWS Load Balancer Controller
-      run: |
-        # Get VPC ID
-        VPC_ID=$(aws eks describe-cluster \
-          --name $CLUSTER_NAME \
-          --region $AWS_REGION \
-          --query "cluster.resourcesVpcConfig.vpcId" \
-          --output text)
-        
-        # Add EKS Helm repository
-        helm repo add eks https://aws.github.io/eks-charts
-        helm repo update
-        
-        # Install AWS Load Balancer Controller
-        helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system \
-          --set clusterName=$CLUSTER_NAME \
-          --set serviceAccount.create=false \
-          --set serviceAccount.name=aws-load-balancer-controller \
-          --set region=$AWS_REGION \
-          --set vpcId=$VPC_ID
+      - name: Ingress and Ingress Controller
+        run: |
+          aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.CLUSTER_NAME }}
+          if ! kubectl get deployment -n kube-system aws-load-balancer-controller --ignore-not-found; then
+            echo "AWS Load Balancer Controller not found, installing..."
 
-          # Apply Ingress manifest file
+            VPC_ID=$(aws eks describe-cluster \
+                --name ${{ env.CLUSTER_NAME }} \
+                --region ${{ env.AWS_REGION }} \
+                --query "cluster.resourcesVpcConfig.vpcId" \
+                --output text)
+
+            helm repo add eks https://aws.github.io/eks-charts
+            helm repo update
+            helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system \
+                --set clusterName=${{ env.CLUSTER_NAME }} \
+                --set serviceAccount.create=false \
+                --set serviceAccount.name=aws-load-balancer-controller \
+                --set region=${{ env.AWS_REGION }} \
+                --set vpcId=$VPC_ID
+
+            echo "Sleeping for 90 seconds to allow webhook to become ready..."
+            sleep 90
+          else
+            echo "AWS Load Balancer Controller already installed. Skipping install step."
+          fi
           kubectl apply -f ingress.yml
-
-    - name: Verify Deployment
-      run: |
-        kubectl get service -n project
-        kubectl get pods -n project
-        kubectl get ingress -n project
